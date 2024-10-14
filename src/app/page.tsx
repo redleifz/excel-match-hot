@@ -1,101 +1,190 @@
-import Image from "next/image";
+'use client';
+
+import { useEffect, useState } from 'react';
+import * as XLSX from 'xlsx';
+import { saveAs } from 'file-saver'; // Make sure to install file-saver
+import moment from 'moment';
 
 export default function Home() {
-  return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <main className="flex flex-col gap-8 row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="https://nextjs.org/icons/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="list-inside list-decimal text-sm text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-semibold">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li>Save and see your changes instantly.</li>
-        </ol>
+  const [file1, setFile1] = useState<File | null>(null);
+  const [file2, setFile2] = useState<File | null>(null);
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="https://nextjs.org/icons/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:min-w-44"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+  // useState to store parsed JSON data
+  const [file1Data, setFile1Data] = useState<unknown[] | null>(null);
+  const [file2Data, setFile2Data] = useState<unknown[] | null>(null);
+
+  const [exportData, setExportData] = useState<unknown[] | null>(null);
+
+  // Handle file upload for the first input
+  const handleFile1Upload = (event: React.ChangeEvent<HTMLInputElement>): void => {
+    const uploadedFile = event.target.files ? event.target.files[0] : null;
+    setFile1(uploadedFile);
+  };
+
+  // Handle file upload for the second input
+  const handleFile2Upload = (event: React.ChangeEvent<HTMLInputElement>): void => {
+    const uploadedFile = event.target.files ? event.target.files[0] : null;
+    setFile2(uploadedFile);
+  };
+
+  // Function to read and process an Excel file and store the result in the corresponding state
+  const processFile = (file: File | null, setFileData: React.Dispatch<React.SetStateAction<unknown[] | null>>): void => {
+    if (file) {
+      const reader = new FileReader();
+
+      reader.onload = (event: ProgressEvent<FileReader>): void => {
+        const result = event.target?.result;
+        if (!result) return;
+
+        const data = new Uint8Array(result as ArrayBuffer);
+        const workbook = XLSX.read(data, { type: 'array' });
+
+        // Combine all sheets into one array of data
+        let allSheetData: unknown[] = [];
+        workbook.SheetNames.forEach((sheetName) => {
+          const worksheet: XLSX.WorkSheet = workbook.Sheets[sheetName];
+          const jsonData: unknown[] = XLSX.utils.sheet_to_json(worksheet);
+          allSheetData = [...allSheetData, ...jsonData];
+        });
+
+        // Set the parsed data in the state
+        setFileData(allSheetData);
+        // console.log(`Processed data for ${file.name}:`, allSheetData);
+      };
+
+      reader.readAsArrayBuffer(file);
+    }
+  };
+
+  // Handle submit to read both files and store data in state
+  const handleSubmit = (): void => {
+    if (file1) processFile(file1, setFile1Data);
+    if (file2) processFile(file2, setFile2Data);
+
+    // console.log('File 1 Data:', file1Data);
+    // console.log('File 2 Data:', file2Data);
+  };
+
+  const excelSerialToJSDate = (serial: number): Date => {
+    // Excel serial date starts on 1st January 1900, but it's offset by 1
+    const daysSince1900 = serial - 25569; // Serial number days since 1970 (Unix epoch)
+    const msPerDay = 86400000; // Number of milliseconds in a day
+    return new Date(daysSince1900 * msPerDay); // Convert to Date object
+  };
+
+  const exportSubmit = (): void => {
+    if (file1Data && file2Data) {
+      const foundData: any[] = [];
+      const notFoundData: any[] = [];
+      const foundIDs = new Set<number | string>(); // Use a Set to track unique IDs
+  
+      // Process file2Data to separate into found and not found
+      file2Data.forEach((file2Item) => {
+        const matchingFile1Item = file1Data.find(
+          (file1Item) => String(file1Item.ID) === String(file2Item.icode)
+        );
+  
+        const formattedRxDate = moment(excelSerialToJSDate(file2Item.rxdate)).format('DD/MM/YYYY');
+  
+        if (matchingFile1Item) {
+          const remain = Number(matchingFile1Item.Maximum) - Number(file2Item.SumOfSumOfqty) || `ไม่มีข้อมูล`;
+  
+          // Check if the ID is already in foundIDs Set
+          if (!foundIDs.has(matchingFile1Item.ID)) {
+            foundData.push({
+              ID: matchingFile1Item.ID,
+              NAME: matchingFile1Item.NAME,
+              location: matchingFile1Item.location,
+              Maximum: matchingFile1Item.Maximum ? Number(matchingFile1Item.Maximum) : `ไม่มีข้อมูล`,
+              Minimum: matchingFile1Item.Minimum ? Number(matchingFile1Item.Minimum) : `ไม่มีข้อมูล`,
+              SumOfSumOfqty: Number(file2Item.SumOfSumOfqty),
+              remark: `${remain <= matchingFile1Item.Minimum ? `${remain}` : `เกิน ${remain}`}`,
+            });
+  
+            // Add the ID to the foundIDs Set
+            foundIDs.add(matchingFile1Item.ID);
+          }
+        } else {
+          notFoundData.push({
+            ...file2Item,
+            rxdate: formattedRxDate, // Add formatted rxdate for not found items
+          });
+        }
+      });
+  
+      // Create worksheets for found and not found data
+      const foundWorksheet = XLSX.utils.json_to_sheet(foundData);
+  
+      // Create a new workbook and append the worksheets
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, foundWorksheet, 'Found');
+  
+      // Generate Excel file and trigger download
+      const excelBuffer = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
+      const fileName = 'exported_data.xlsx';
+  
+      // Save the file using FileSaver
+      const blob = new Blob([excelBuffer], { type: 'application/octet-stream' });
+      saveAs(blob, fileName);
+  
+      setExportData(foundData); // Optional: set export data to include both found and not found
+    } else {
+      console.error('file1Data or file2Data is missing.');
+    }
+  };
+  
+  
+
+  useEffect(() => {
+    console.log(`data found in file1Data:`,exportData);
+  },[exportData])
+
+  return (
+    <div className="flex h-screen items-center justify-center p-10">
+      <div className="flex flex-col gap-2">
+        <div className="text-xl text-center mb-10">Upload Excel Files</div>
+
+        {/* First input for single file upload */}
+        <div className="flex justify-center items-center gap-2">
+          <span>Master Data:</span>
+          <input
+            type="file"
+            accept=".xlsx, .xls"
+            onChange={handleFile1Upload}
+          />
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-6 flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="https://nextjs.org/icons/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
+
+        {/* Second input for single file upload */}
+        <div className="flex justify-center items-center gap-2">
+          <span>HotXp Data:</span>
+          <input
+            type="file"
+            accept=".xlsx, .xls"
+            onChange={handleFile2Upload}
           />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
+        </div>
+
+        {/* Submit button to process both files */}
+        <button
+          onClick={handleSubmit}
+          className="mt-4 p-2 bg-blue-500 text-white rounded"
         >
-          <Image
-            aria-hidden
-            src="https://nextjs.org/icons/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
+          Read Files
+        </button>
+
+        {/* Display the number of rows in each file */}
+        <div className="mt-4">
+          <p>File 1 Data Rows: {file1Data?.length || 0}</p>
+          <p>File 2 Data Rows: {file2Data?.length || 0}</p>
+        </div>
+        <button
+          onClick={exportSubmit}
+          className="mt-4 p-2 bg-green-500 text-white rounded"
         >
-          <Image
-            aria-hidden
-            src="https://nextjs.org/icons/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
+          Export Files
+        </button>
+
+      </div>
     </div>
   );
 }
